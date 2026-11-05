@@ -1,0 +1,53 @@
+name: 摩尔庄园每日自动挂机领奖
+
+on:
+  schedule:
+    # 每天 UTC 19:17 = 北京时间 早上 04:17 自动启动 (挂机95分钟, 约 04:52 领完奖结束)
+    - cron: '17 19 * * *'
+
+  # 支持在网页上手动点击按钮立即运行/测试
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: '挂机时长(分钟)，默认 95 分钟；测试连通性可填 1'
+        required: false
+        default: '95'
+      claim_only:
+        description: '是否跳过挂机直接领奖 (true/false)'
+        required: false
+        default: 'false'
+
+jobs:
+  afk_and_claim:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+
+    steps:
+      - name: 1. 拉取仓库代码
+        uses: actions/checkout@v4
+
+      - name: 2. 设置 Python 环境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 3. 运行摩尔庄园挂机与领奖脚本
+        env:
+          TZ: Asia/Shanghai
+          MOLE_USER_ID: ${{ secrets.MOLE_USER_ID }}
+          MOLE_PASSWORD: ${{ secrets.MOLE_PASSWORD }}
+        run: |
+          DURATION="${{ github.event.inputs.duration || '95' }}"
+          if [ "${{ github.event.inputs.claim_only }}" = "true" ]; then
+            python -u AFK_25_210547312.py --claim-only
+          else
+            python -u AFK_25_210547312.py -d "$DURATION"
+          fi
+
+      - name: 4. 保存运行日志 (afk.log) 供随时下载查阅
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mole-afk-log-${{ github.run_number }}
+          path: afk.log
+          retention-days: 14
