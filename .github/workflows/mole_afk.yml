@@ -1,11 +1,14 @@
 name: 摩尔庄园每日自动挂机领奖
 
 on:
+  # 1. 每天 3 个时间点接力兜底触发 (防止 GitHub 偶发抽风吞掉单次定时任务)
+  # 若前一次已成功运行或正在运行中, 后续兜底触发会在 2 秒内自动跳过, 绝不重复挂机!
   schedule:
-    # 每天 UTC 19:17 = 北京时间 早上 04:17 自动启动 (挂机95分钟, 约 04:52 领完奖结束)
-    - cron: '17 19 * * *'
+    - cron: '17 18 * * *'   # 第1顺位: UTC 18:17 = 北京时间 凌晨 02:17 启动 (约 03:52 结束)
+    - cron: '13 20 * * *'   # 第2兜底: UTC 20:13 = 北京时间 凌晨 04:13 启动 (若02:17未触发则接管, 约 05:48 结束)
+    - cron: '7 22 * * *'    # 第3兜底: UTC 22:07 = 北京时间 早上 06:07 启动 (若前两次均未触发则接管, 约 07:42 结束)
 
-  # 支持在网页上手动点击按钮立即运行/测试
+  # 2. 支持在网页上手动点击按钮立即运行/测试 (手动触发不受防重限制, 随时可跑)
   workflow_dispatch:
     inputs:
       duration:
@@ -23,15 +26,32 @@ jobs:
     timeout-minutes: 150
 
     steps:
+      - name: 0. 检查今日是否已执行 (防重复挂机)
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SINCE=$(date -u -d '10 hours ago' +"%Y-%m-%dT%H:%M:%SZ")
+          COUNT=$(gh api "/repos/${{ github.repository }}/actions/workflows/mole_afk.yml/runs?created=>=$SINCE" \
+            --jq '[.workflow_runs[] | select(.id != ${{ github.run_id }} and (.conclusion == "success" or .status == "in_progress"))] | length' 2>/dev/null || echo "0")
+          echo "过去10小时内已成功或正在运行的次数: $COUNT"
+          if [ "$COUNT" -gt 0 ]; then
+            echo "✅ 今日挂机任务已执行成功或正在运行中，本次兜底触发自动跳过！"
+            echo "SKIP_AFK=true" >> "$GITHUB_ENV"
+          fi
+
       - name: 1. 拉取仓库代码
+        if: env.SKIP_AFK != 'true'
         uses: actions/checkout@v4
 
       - name: 2. 设置 Python 环境
+        if: env.SKIP_AFK != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: 3. 运行摩尔庄园挂机与领奖脚本
+        if: env.SKIP_AFK != 'true'
         env:
           TZ: Asia/Shanghai
           MOLE_USER_ID: ${{ secrets.MOLE_USER_ID }}
@@ -45,7 +65,7 @@ jobs:
           fi
 
       - name: 4. 保存运行日志 (afk.log) 供随时下载查阅
-        if: always()
+        if: always() && env.SKIP_AFK != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: mole-afk-log-${{ github.run_number }}
